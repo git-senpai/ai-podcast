@@ -84,8 +84,8 @@ export default function PodcastForm({
             >
               Main Topic
               <span className="text-xs text-gray-400 block mt-1">
-                Choose a clear, specific topic (e.g., "Space Exploration",
-                "Healthy Eating")
+                Choose a clear, specific topic (e.g., &quot;Space
+                Exploration&quot;, &quot;Healthy Eating&quot;)
               </span>
             </label>
             <input
@@ -107,8 +107,8 @@ export default function PodcastForm({
             >
               Specific Focus (Optional)
               <span className="text-xs text-gray-400 block mt-1">
-                Narrow down your topic (e.g., "Mars Colonization",
-                "Mediterranean Diet")
+                Narrow down your topic (e.g., &quot;Mars Colonization&quot;,
+                &quot;Mediterranean Diet&quot;)
               </span>
             </label>
             <input
