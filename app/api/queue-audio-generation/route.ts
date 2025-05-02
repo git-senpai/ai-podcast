@@ -19,8 +19,28 @@ interface VoiceSettings {
 
 // This would ideally be stored in a database like MongoDB, Redis, or a serverless database
 // For now, we'll use a simple in-memory map (note: this will be cleared on function cold starts)
-const pendingRequests = new Map();
-const completedRequests = new Map();
+interface PendingRequest {
+  status: string;
+  timestamp: number;
+  script: string;
+  voiceSettings: VoiceSettings;
+  format: string;
+}
+
+interface CompletedRequest {
+  status: string;
+  timestamp: number;
+  error?: string;
+  audioUrl?: string;
+  metadata?: {
+    duration: number;
+    format: string;
+    voices: any[];
+  };
+}
+
+const pendingRequests = new Map<string, PendingRequest>();
+const completedRequests = new Map<string, CompletedRequest>();
 
 if (!process.env.FAL_KEY) {
   throw new Error("FAL_KEY environment variable is not set");
@@ -73,11 +93,14 @@ export async function POST(request: Request) {
     // Start the generation process in the background
     // This won't block the response
     processAudioGeneration(requestId, script, voiceSettings, format).catch(
-      (error) => {
+      (error: unknown) => {
         console.error(`Error processing request ${requestId}:`, error);
         completedRequests.set(requestId, {
           status: "error",
-          error: error.message,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown error during audio generation",
           timestamp: Date.now(),
         });
         pendingRequests.delete(requestId);
@@ -91,12 +114,13 @@ export async function POST(request: Request) {
       status: "queued",
       message: "Audio generation has been queued",
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Request processing error:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error.message || "Failed to process request",
+        error:
+          error instanceof Error ? error.message : "Failed to process request",
         details: "Check server logs for more information",
       },
       { status: 400 }
@@ -249,11 +273,14 @@ async function processAudioGeneration(
 
     // Remove from pending requests
     pendingRequests.delete(requestId);
-  } catch (error) {
+  } catch (error: unknown) {
     console.error(`Error processing request ${requestId}:`, error);
     completedRequests.set(requestId, {
       status: "error",
-      error: error.message || "Unknown error during audio generation",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown error during audio generation",
       timestamp: Date.now(),
     });
     pendingRequests.delete(requestId);
