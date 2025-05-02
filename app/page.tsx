@@ -41,9 +41,9 @@ export default function Home() {
         throw new Error(scriptData.error || "Failed to generate script");
       }
 
-      // Generate audio
-      console.log("Generating audio with script:", scriptData.script);
-      const audioResponse = await fetch("/api/generate-audio", {
+      // Use the new queue-based approach for audio generation
+      console.log("Queueing audio generation with script:", scriptData.script);
+      const queueResponse = await fetch("/api/queue-audio-generation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -52,19 +52,72 @@ export default function Home() {
         }),
       });
 
-      const audioData = await audioResponse.json();
-      if (!audioData.success) {
-        throw new Error(audioData.error || "Failed to generate audio");
+      if (!queueResponse.ok) {
+        let errorMessage = `Server error: ${queueResponse.status} ${queueResponse.statusText}`;
+        try {
+          const errorData = await queueResponse.json();
+          if (errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (jsonError) {
+          console.error("Failed to parse error response as JSON:", jsonError);
+        }
+
+        throw new Error(errorMessage);
       }
 
-      setGenerationProgress(100);
-      clearInterval(progressInterval);
-      setAudioUrl(audioData.audioUrl);
+      const queueData = await queueResponse.json();
+      if (!queueData.success) {
+        throw new Error(queueData.error || "Failed to queue audio generation");
+      }
+
+      const requestId = queueData.requestId;
+      console.log("Audio generation queued with requestId:", requestId);
+
+      // Poll for status updates every 2 seconds
+      let audioUrl = null;
+      const pollingInterval = setInterval(async () => {
+        try {
+          const statusResponse = await fetch(
+            `/api/queue-audio-generation?requestId=${requestId}`
+          );
+          const statusData = await statusResponse.json();
+
+          if (statusData.status === "completed" && statusData.audioUrl) {
+            clearInterval(pollingInterval);
+            audioUrl = statusData.audioUrl;
+            setGenerationProgress(100);
+            setAudioUrl(audioUrl);
+            setIsGenerating(false);
+          } else if (statusData.status === "error") {
+            clearInterval(pollingInterval);
+            throw new Error(statusData.error || "Failed to generate audio");
+          } else {
+            // Still processing, update progress to show activity
+            setGenerationProgress((prev) => Math.min(90, prev + 1));
+          }
+        } catch (err) {
+          console.error("Error polling for status:", err);
+          // Continue polling despite errors
+        }
+      }, 2000);
+
+      // Set a timeout to stop polling after 2 minutes to prevent infinite polling
+      setTimeout(() => {
+        if (audioUrl === null) {
+          clearInterval(pollingInterval);
+          setIsGenerating(false);
+          setError(
+            "Audio generation is taking longer than expected. Please check back later or try again with a shorter script."
+          );
+        }
+      }, 2 * 60 * 1000);
     } catch (err: any) {
       console.error("Generation error:", err);
       setError(err?.message || "An unexpected error occurred");
-    } finally {
       setIsGenerating(false);
+    } finally {
+      // Don't set isGenerating to false here as we might still be polling
     }
   };
 
