@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 
-// Add type for fal.ai response
+// Type definitions for better type safety
+interface VoiceSettings {
+  numberOfSpeakers: number;
+  [key: string]: any; // Allow additional properties
+}
+
 interface FalResponse {
   data: {
     audio: {
@@ -11,14 +16,6 @@ interface FalResponse {
   };
 }
 
-// Define voice settings interface
-interface VoiceSettings {
-  numberOfSpeakers: number;
-  [key: string]: any; // Allow additional properties
-}
-
-// This would ideally be stored in a database like MongoDB, Redis, or a serverless database
-// For now, we'll use a simple in-memory map (note: this will be cleared on function cold starts)
 interface PendingRequest {
   status: string;
   timestamp: number;
@@ -39,21 +36,25 @@ interface CompletedRequest {
   };
 }
 
+// In-memory storage (note: will be cleared on serverless function cold starts)
 const pendingRequests = new Map<string, PendingRequest>();
 const completedRequests = new Map<string, CompletedRequest>();
 
+// Check for API key
 if (!process.env.FAL_KEY) {
   throw new Error("FAL_KEY environment variable is not set");
 }
 
+// Configure fal client
 fal.config({
   credentials: process.env.FAL_KEY,
 });
 
-// This endpoint queues a task and returns immediately with a requestId
+// POST endpoint - Queue an audio generation task
 export async function POST(request: Request) {
   try {
-    const { script, voiceSettings, format = "dialogue" } = await request.json();
+    const body = await request.json();
+    const { script, voiceSettings, format = "dialogue" } = body;
 
     // Validate required fields
     if (!script || typeof script !== "string") {
@@ -79,9 +80,9 @@ export async function POST(request: Request) {
 
     // Generate a unique request ID
     const requestId =
-      Date.now().toString(36) + Math.random().toString(36).substr(2);
+      Date.now().toString(36) + Math.random().toString(36).substring(2);
 
-    // Store the request in our pending map
+    // Store in pending requests
     pendingRequests.set(requestId, {
       status: "queued",
       timestamp: Date.now(),
@@ -90,27 +91,13 @@ export async function POST(request: Request) {
       format,
     });
 
-    // Start the generation process in the background
-    // This won't block the response
-    processAudioGeneration(requestId, script, voiceSettings, format).catch(
-      (error: unknown) => {
-        console.error(`Error processing request ${requestId}:`, error);
-        completedRequests.set(requestId, {
-          status: "error",
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unknown error during audio generation",
-          timestamp: Date.now(),
-        });
-        pendingRequests.delete(requestId);
-      }
-    );
+    // Start processing in background
+    void processAudioGeneration(requestId, script, voiceSettings, format);
 
-    // Return the request ID immediately
+    // Return immediately with request ID
     return NextResponse.json({
       success: true,
-      requestId: requestId,
+      requestId,
       status: "queued",
       message: "Audio generation has been queued",
     });
@@ -128,89 +115,132 @@ export async function POST(request: Request) {
   }
 }
 
-// This endpoint checks the status of a previously queued task
+// GET endpoint - Check status of a request
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const requestId = url.searchParams.get("requestId");
+  try {
+    const url = new URL(request.url);
+    const requestId = url.searchParams.get("requestId");
 
-  if (!requestId) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Missing requestId parameter",
-      },
-      { status: 400 }
-    );
-  }
+    if (!requestId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Missing requestId parameter",
+        },
+        { status: 400 }
+      );
+    }
 
-  // Check if the request is completed
-  if (completedRequests.has(requestId)) {
-    const result = completedRequests.get(requestId);
+    // Check if completed
+    if (completedRequests.has(requestId)) {
+      const result = completedRequests.get(requestId);
 
-    // For successful requests, we can clean up after sending the response
-    if (result.status === "completed") {
-      // Keep the result for a while in case of client retries, but eventually clean up
-      // In a real system this would be handled by a database TTL or cleanup job
-      setTimeout(() => {
-        completedRequests.delete(requestId);
-      }, 1000 * 60 * 10); // 10 minutes
+      if (!result) {
+        return NextResponse.json(
+          {
+            success: false,
+            status: "error",
+            error: "Request data is missing",
+          },
+          { status: 500 }
+        );
+      }
+
+      // Handle successful completion
+      if (result.status === "completed") {
+        // Cleanup after a delay
+        setTimeout(() => {
+          completedRequests.delete(requestId);
+        }, 1000 * 60 * 10); // 10 minutes
+
+        return NextResponse.json({
+          success: true,
+          status: "completed",
+          audioUrl: result.audioUrl,
+          metadata: result.metadata,
+        });
+      }
+
+      // Handle errors
+      if (result.status === "error") {
+        return NextResponse.json(
+          {
+            success: false,
+            status: "error",
+            error: result.error || "Unknown error occurred",
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Check if pending
+    if (pendingRequests.has(requestId)) {
+      const pendingRequest = pendingRequests.get(requestId);
+
+      if (!pendingRequest) {
+        return NextResponse.json(
+          {
+            success: false,
+            status: "error",
+            error: "Request data is missing",
+          },
+          { status: 500 }
+        );
+      }
 
       return NextResponse.json({
         success: true,
-        status: "completed",
-        audioUrl: result.audioUrl,
-        metadata: result.metadata,
+        status: "pending",
+        message: "Your audio is still being generated",
+        queuedAt: pendingRequest.timestamp,
       });
     }
 
-    // For failed requests
+    // Request not found
     return NextResponse.json(
       {
         success: false,
-        status: "error",
-        error: result.error,
+        status: "not_found",
+        error: "Request not found",
+      },
+      { status: 404 }
+    );
+  } catch (error: unknown) {
+    console.error("Error checking request status:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to check request status",
       },
       { status: 500 }
     );
   }
-
-  // Check if the request is still pending
-  if (pendingRequests.has(requestId)) {
-    const pendingRequest = pendingRequests.get(requestId);
-    return NextResponse.json({
-      success: true,
-      status: "pending",
-      message: "Your audio is still being generated",
-      queuedAt: pendingRequest.timestamp,
-    });
-  }
-
-  // Request not found
-  return NextResponse.json(
-    {
-      success: false,
-      status: "not_found",
-      error: "Request not found",
-    },
-    { status: 404 }
-  );
 }
 
-// Function to process the audio generation in the background
+// Background processing function
 async function processAudioGeneration(
   requestId: string,
   script: string,
   voiceSettings: VoiceSettings,
   format: string
-) {
+): Promise<void> {
   try {
-    // Update status to processing
+    // Update status
+    const pendingRequest = pendingRequests.get(requestId);
+    if (!pendingRequest) {
+      throw new Error(`Request ${requestId} not found in pending requests`);
+    }
+
     pendingRequests.set(requestId, {
-      ...pendingRequests.get(requestId),
+      ...pendingRequest,
       status: "processing",
     });
 
-    // Format the script for dialogue if multiple speakers
+    // Format script for dialogue if needed
     let formattedScript = script;
     if (format === "dialogue" && voiceSettings.numberOfSpeakers > 1) {
       formattedScript = script
@@ -224,7 +254,7 @@ async function processAudioGeneration(
         .join("\n");
     }
 
-    // Configure voices based on settings
+    // Configure voices
     const voices = Array(voiceSettings.numberOfSpeakers)
       .fill(null)
       .map((_, index) => ({
@@ -237,6 +267,7 @@ async function processAudioGeneration(
 
     console.log(`Processing request ${requestId} with fal.ai`);
 
+    // Call fal.ai API
     const result = (await fal.subscribe("fal-ai/playai/tts/dialog", {
       input: {
         input: formattedScript,
@@ -255,11 +286,12 @@ async function processAudioGeneration(
 
     console.log(`Completed request ${requestId}`);
 
-    if (!result.data?.audio?.url) {
+    // Check for valid response
+    if (!result?.data?.audio?.url) {
       throw new Error("No audio URL in response");
     }
 
-    // Store the completed result
+    // Store successful result
     completedRequests.set(requestId, {
       status: "completed",
       timestamp: Date.now(),
@@ -271,18 +303,22 @@ async function processAudioGeneration(
       },
     });
 
-    // Remove from pending requests
+    // Clean up pending request
     pendingRequests.delete(requestId);
   } catch (error: unknown) {
     console.error(`Error processing request ${requestId}:`, error);
+
+    // Store error result
     completedRequests.set(requestId, {
       status: "error",
+      timestamp: Date.now(),
       error:
         error instanceof Error
           ? error.message
           : "Unknown error during audio generation",
-      timestamp: Date.now(),
     });
+
+    // Clean up pending request
     pendingRequests.delete(requestId);
   }
 }
