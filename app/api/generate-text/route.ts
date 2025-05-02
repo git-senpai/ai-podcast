@@ -84,13 +84,12 @@ export async function POST(request: Request) {
         subtopic: subtopic || null,
       },
     });
-  } catch (error: any) {
-    console.error("Text generation error:", error);
+  } catch (error: unknown) {
+    console.error("Script generation error:", error);
     return NextResponse.json(
       {
-        success: false,
-        error: error.message || "Failed to generate text",
-        details: "Check server logs for more information",
+        error:
+          error instanceof Error ? error.message : "Failed to generate script",
       },
       { status: 500 }
     );

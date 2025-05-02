@@ -111,23 +111,27 @@ export async function POST(request: Request) {
           voices: voices,
         },
       });
-    } catch (falError: any) {
+    } catch (falError: unknown) {
       console.error("Fal.ai API error:", falError);
       return NextResponse.json(
         {
           success: false,
-          error: falError.message || "Failed to generate audio with fal.ai",
+          error:
+            falError instanceof Error
+              ? falError.message
+              : "Failed to generate audio with fal.ai",
           details: falError,
         },
         { status: 500 }
       );
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Request processing error:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error.message || "Failed to process request",
+        error:
+          error instanceof Error ? error.message : "Failed to process request",
         details: "Check server logs for more information",
       },
       { status: 400 }

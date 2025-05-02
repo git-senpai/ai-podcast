@@ -59,7 +59,7 @@ export default function Home() {
           if (errorData.error) {
             errorMessage = errorData.error;
           }
-        } catch (jsonError) {
+        } catch (jsonError: unknown) {
           console.error("Failed to parse error response as JSON:", jsonError);
         }
 
@@ -75,7 +75,7 @@ export default function Home() {
       console.log("Audio generation queued with requestId:", requestId);
 
       // Poll for status updates every 2 seconds
-      let audioUrl = null;
+      let audioUrl: string | null = null;
       const pollingInterval = setInterval(async () => {
         try {
           const statusResponse = await fetch(
@@ -96,7 +96,7 @@ export default function Home() {
             // Still processing, update progress to show activity
             setGenerationProgress((prev) => Math.min(90, prev + 1));
           }
-        } catch (err) {
+        } catch (err: unknown) {
           console.error("Error polling for status:", err);
           // Continue polling despite errors
         }
@@ -112,9 +112,11 @@ export default function Home() {
           );
         }
       }, 2 * 60 * 1000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Generation error:", err);
-      setError(err?.message || "An unexpected error occurred");
+      setError(
+        err instanceof Error ? err.message : "An unexpected error occurred"
+      );
       setIsGenerating(false);
     } finally {
       // Don't set isGenerating to false here as we might still be polling
