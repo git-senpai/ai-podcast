@@ -1,6 +1,22 @@
 import { NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 
+// Add type for fal.ai response
+interface FalResponse {
+  data: {
+    audio: {
+      url: string;
+      duration: number;
+    };
+  };
+}
+
+// Define voice settings interface
+interface VoiceSettings {
+  numberOfSpeakers: number;
+  [key: string]: any; // Allow additional properties
+}
+
 // This would ideally be stored in a database like MongoDB, Redis, or a serverless database
 // For now, we'll use a simple in-memory map (note: this will be cleared on function cold starts)
 const pendingRequests = new Map();
@@ -18,6 +34,28 @@ fal.config({
 export async function POST(request: Request) {
   try {
     const { script, voiceSettings, format = "dialogue" } = await request.json();
+
+    // Validate required fields
+    if (!script || typeof script !== "string") {
+      return NextResponse.json(
+        { success: false, error: "Script is required and must be a string" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      !voiceSettings ||
+      typeof voiceSettings !== "object" ||
+      !voiceSettings.numberOfSpeakers
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Valid voiceSettings with numberOfSpeakers is required",
+        },
+        { status: 400 }
+      );
+    }
 
     // Generate a unique request ID
     const requestId =
@@ -136,10 +174,10 @@ export async function GET(request: Request) {
 
 // Function to process the audio generation in the background
 async function processAudioGeneration(
-  requestId,
-  script,
-  voiceSettings,
-  format
+  requestId: string,
+  script: string,
+  voiceSettings: VoiceSettings,
+  format: string
 ) {
   try {
     // Update status to processing
@@ -175,7 +213,7 @@ async function processAudioGeneration(
 
     console.log(`Processing request ${requestId} with fal.ai`);
 
-    const result = await fal.subscribe("fal-ai/playai/tts/dialog", {
+    const result = (await fal.subscribe("fal-ai/playai/tts/dialog", {
       input: {
         input: formattedScript,
         voices: voices,
@@ -189,7 +227,7 @@ async function processAudioGeneration(
           update.logs.map((log) => log.message).forEach(console.log);
         }
       },
-    });
+    })) as FalResponse;
 
     console.log(`Completed request ${requestId}`);
 
